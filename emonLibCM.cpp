@@ -1,5 +1,8 @@
-// emonLibCM.cpp - Library for openenergymonitor
-// GNU GPL
+/* agmkv70 fork of
+  emonLibCM.cpp - Library for openenergymonitor
+  GNU GPL
+  - cleared temperature and pulse count, adding 3 phase voltage mesurement
+*/
 
 // This library provides continuous single-phase monitoring of real power on up to five CT channels.
 // All of the time-critical code is now contained within the ISR, only the slower activities
@@ -7,44 +10,8 @@
 // and all Serial statements (not part of the library).  
 //
 // This library is suitable for either 50 or 60 Hz operation.
-//
-// Original Author: Robin Emley (calypso_rae on Open Energy Monitor Forum)
-// Addition of Wh totals by: Trystan Lea
-// Heavily modified to improve performance and calibration; temperature measurement 
-//  and pulse counting incorporated into the library,  by Robert Wall 
-//  Release for testing 4/1/2017
-//
-// Version 2.0  21/11/2018
-// Version 2.01  3/12/2018  Calculation error in phase error correction - const.'360' missing, 'x' & 'y' coefficients swapped.
-
-
-// #include "WProgram.h" un-comment for use on older versions of Arduino IDE
-
-// #define SAMPPIN 5           // Preferred pin for testing. This MUST be commented out if a temperature sensor is connected. Only include for testing.
-// #define SAMPPIN 19          // Alternative pin for testing. This MUST be commented out if the temperature sensor power is connected here. Only include for testing.
 
 #include "emonLibCM.h"
-
-#if defined(ARDUINO) && ARDUINO >= 100
-
-#include "Arduino.h"
-
-#else
-
-#include "WProgram.h"
-
-#endif
-
-
-// Dallas DS18B20 commands
-
-#include <Wire.h>
-#include <SPI.h>
-#include <util/crc16.h>
-#include <OneWire.h>
-#include <DallasTemperature.h>                                         //http://download.milesburton.com/Arduino/MaximTemperature/DallasTemperature_LATEST.zip
-
-
 
 int cycles_per_second = 50;                                            // mains frequency in Hz (i.e. 50 or 60)
 float datalog_period_in_seconds = 10.0;
@@ -78,17 +45,6 @@ static byte ADC_Sequence[max_no_of_channels+1] = {0,1,2,3,4,5};        // <-- Se
 int ADCBits = 10;                                                      // 10 for the emonTx and most of the Arduino range, 12 for the Arduino Due.
 double Vref = 3.3;                                                     // ADC Reference Voltage = 3.3 for emonTX, 5.0 for most of the Arduino range.
 int ADCDuration = 104;                                                 // Time in microseconds for one ADC conversion = 104 for 16 MHz clock 
-
-// Pulse Counting;
-bool PulseEnabled = false;
-byte PulsePin = 3;                                                     // default to DI3 for the emonTx V3
-byte PulseInterrupt = 1;                                               // default to int1 for the emonTx V3
-unsigned long PulseMinPeriod = 110;                                    // default to 110 ms
-unsigned long pulseCount = 0;                                          // Total number of pulses from switch-on 
-volatile unsigned long pulses= 0;                                      // Incremental number of pulses between readings
-unsigned long pulseTime;                                               // Instant of the last pulse - used for debounce logic
-void onPulse();                                                        // pulse time of arrival
-
 
 // Set-up values
 //--------------
@@ -216,28 +172,6 @@ enum polarities polarityConfirmedOfLastSampleV;     // for zero-crossing detecti
 float residualEnergy_CT[max_no_of_channels];
 double x[max_no_of_channels], y[max_no_of_channels]; // coefficients for real power interpolation
 
-
-// Temperature measurement
-//
-// Hardware Configuration
-byte W1Pin = 5;                                     // 1-Wire pin for temperature = 5 for emonTx V3, 4 for emonTx V2 & emonTx Shield
-char DS18B20_PWR = -1;                              // Power pin for DS18B20 temperature sensors. Default -1 - power off
-
-// Global variables used only inside the library
-OneWire oneWire(W1Pin);
-DallasTemperature sensors(&oneWire);
-bool temperatureEnabled = false;
-byte numSensors = 0;
-byte temperatureResolution = TEMPRES_11;
-byte temperatureMaxCount = 1;
-DeviceAddress *temperatureSensors = NULL;
-int *temperatures = NULL;
-unsigned int temperatureConversionDelayTime; 
-unsigned long temperatureConversionDelaySamples;
-
-bool startConvertTemperatures = false;
-bool convertingTemperaturesNoAC = false;            // Only used when not using mains for timing.
-
 /**************************************************************************************************
 *
 *   APPLICATION INTERFACE - Getters & Setters
@@ -282,23 +216,6 @@ void EmonLibCM_setADC(int _ADCBits,  int _ADCDuration)
     ADCDuration = _ADCDuration;
 }
 
-void EmonLibCM_setPulseEnable(bool _enable)
-{
-    PulseEnabled = _enable;
-}
-
-void EmonLibCM_setPulsePin(int _pin, int _interrupt)
-{
-    PulsePin = _pin;
-    PulseInterrupt = _interrupt;
-}
-
-void EmonLibCM_setPulseMinPeriod(int _period)
-{
-    PulseMinPeriod = _period;
-}
-
-
 void EmonLibCM_ADCCal(double _Vref)
 {
     Vref = _Vref;
@@ -339,12 +256,6 @@ long EmonLibCM_getWattHour(int channel)
 {
     return wh_CT[channel];
 }
-
-unsigned long EmonLibCM_getPulseCount(void)
-{
-    return pulseCount;
-}
-
 
 #ifdef INTEGRITY
 int EmonLibCM_minSampleSetsDuringThisMainsCycle(void)    
@@ -404,12 +315,6 @@ void EmonLibCM_Init(void)
     pinMode(SAMPPIN, OUTPUT);
     digitalWrite(SAMPPIN, LOW);
 #endif
-
-    if (PulseEnabled)
-    {
-        pinMode(PulsePin, INPUT_PULLUP);                              // Set interrupt pulse counting pin as input
-        attachInterrupt(PulseInterrupt, onPulse, RISING);             // Attach pulse counting interrupt pulse counting,  
-    }
 }
 
 /**************************************************************************************************
@@ -459,7 +364,6 @@ void EmonLibCM_Start(void)
 
     ADCSRA |= (1<<ADSC);   // start ADC manually first time 
     sei();                 // Enable Global Interrupts
-    
     
 }
 
@@ -584,12 +488,6 @@ void EmonLibCM_get_readings()
 
 bool EmonLibCM_Ready()
 {
-    if (startConvertTemperatures)
-    {
-        startConvertTemperatures = false;
-        convertTemperatures();
-    }
-    
     if (datalogEventPending) 
     {
         datalogEventPending = false;
@@ -631,7 +529,6 @@ void EmonLibCM_confirmPolarity()
 *
 *
 ***************************************************************************************************/
-
 
 void EmonLibCM_allGeneralProcessing_withinISR()
 {
@@ -939,272 +836,13 @@ void EmonLibCM_interrupt()
 
 /**************************************************************************************************
 *
-*   TEMPERATURES
+*    ISR
 *
 *
 ***************************************************************************************************/
-
-
-void EmonLibCM_setTemperatureDataPin(byte _dataPin)
-{
-    W1Pin = _dataPin;
-}
-
-
-void EmonLibCM_setTemperaturePowerPin(char _powerPin)
-{
-    DS18B20_PWR = _powerPin;
-    if (DS18B20_PWR >= 0)
-    {
-        pinMode(DS18B20_PWR, OUTPUT);  
-        digitalWrite(DS18B20_PWR, HIGH); 
-    }
-}
-
-
-void EmonLibCM_setTemperatureResolution(byte _resolution)
-{
-    switch (_resolution)
-    {
-        case (9):  temperatureResolution = TEMPRES_9;
-                   break;
-        case (10): temperatureResolution = TEMPRES_10;
-                   break;
-        case (12): temperatureResolution = TEMPRES_12;
-                   break;
-        default:   temperatureResolution = TEMPRES_11;
-                   break;
-    }
-}
-    
-    
-void EmonLibCM_setTemperatureAddresses(DeviceAddress *addressArray)
-{
-    temperatureSensors = addressArray; 
-    temperatureSensors[0][0] = 0x00;            // Used by "TemperatureEnable" to trigger search for sensors
-}
-
-
-void EmonLibCM_setTemperatureAddresses(DeviceAddress *addressArray, bool keep)
-{
-    temperatureSensors = addressArray; 
-    if (!keep)
-        temperatureSensors[0][0] = 0x00;        // Used by "TemperatureEnable" to trigger search for sensors
-}
-
-
-void EmonLibCM_setTemperatureArray(int *temperatureArray)
-{
-    temperatures = temperatureArray;
-}
-
-
-void EmonLibCM_setTemperatureMaxCount(int _maxCount)
-{
-    temperatureMaxCount = _maxCount;
-}
-
-
-void EmonLibCM_TemperatureEnable(bool _enable)
-{
-  //Setup and test for presence of DS18B20s, fill address array, set device resolution & write to EEPROM
-
-  
-    if ( temperatureSensors == NULL || temperatures == NULL)
-    {
-        temperatureEnabled = false;                     // Could corrupt memory, try to limit damage
-        numSensors = 0;
-        return;                                         // & quit.
-    }
-
-    if (temperatureEnabled = _enable)
-    {
-        if (datalog_period_in_seconds < 1.0)            // Not enough time to convert between samples.
-            temperatureResolution = TEMPRES_9;
-        byte scratchpad[3];
-        scratchpad[0] = 0;                              // low alarm
-        scratchpad[1] = 0;                              // high alarm
-        scratchpad[2] = temperatureResolution;          // resolution
-
-        for(byte j=0; j<temperatureMaxCount; j++)
-           temperatures[j] = UNUSED_TEMPERATURE;        // write 'Sensor never seen' marker to temperatures array
-
-        sensors.begin();
-        numSensors=(sensors.getDeviceCount()); 
-        if (numSensors > temperatureMaxCount)
-            numSensors = temperatureMaxCount;
-        byte j=0;                                       // search for one wire devices and copy to device address array.
-       
-        if (temperatureSensors[0][0] != 0x28)           // 0x28 = signature of a DS18B20, so a pre-existing array - do not search for sensors
-            while ((j < numSensors) && (oneWire.search(temperatureSensors[j]))) 
-                j++;
-        oneWire.reset();                                // write resolution to scratchpad 
-        oneWire.write(SKIP_ROM);
-        oneWire.write(WRITE_SCRATCHPAD);
-        for(int i=0; i<3; i++)
-            oneWire.write(scratchpad[i]);
-        oneWire.reset();                                // copy to EEPROM 
-        oneWire.write(SKIP_ROM);
-        oneWire.write(COPY_SCRATCHPAD, true);
-        delay(20);                                      // required by DS18B20
-    }
-    // Calculate number of cycles (or in the absence of ac, no. of samples) to allow after datalogEventPending has been set
-    //  to true, so that temperature conversion will complete just before the next datalog event. Adjust the resolution if necessary
-    //  so that conversion within one datalogging period is possible.
-   
-    int conversionLeadTime = (CONVERSION_LEAD_TIME >> (3 - ((temperatureResolution & 0x70) >> 5)));  
-        // Should give 95 - 760 ms lead time, now convert to cycles (for a.c. present) or samples (for a.c. not present).
-    temperatureConversionDelayTime = datalogPeriodInMainsCycles - (long)conversionLeadTime * cycles_per_second / 1000 - 1; 
-        // '-1' to counter the effect of integer truncation, and make sure there is some spare time
-
-    temperatureConversionDelaySamples = ((unsigned long)(datalog_period_in_seconds * 1000.0) 
-        - (unsigned long)conversionLeadTime - 5) * 1000 / ADCDuration;
-        // '- 5' extra 5 ms to make sure there is some spare time
-    
-}
-
-void printTemperatureSensorAddresses(void)
-{
-    Serial.print("Temperature Sensors found = ");
-    Serial.print(numSensors);
-    Serial.print(" of ");
-    Serial.print(temperatureMaxCount);
-    
-    if (numSensors)
-    {
-        Serial.println(", with addresses...");
-            for (int j=0; j< numSensors; j++)
-            {
-                for (int i=0; i<8; i++)
-                {
-                    Serial.print(temperatureSensors[j][i], 16);
-                    Serial.print(" ");
-                }
-                Serial.println();
-                delay(5);
-            }
-    }
-    Serial.println();
-    Serial.print("Temperature measurement is");
-    Serial.print(temperatureEnabled?"":" NOT");
-    Serial.println(" enabled.");
-    Serial.println();
-    delay(5);
-        
-}
-
-void convertTemperatures(void)
-{
-    if (temperatureEnabled)
-    {
-        if (DS18B20_PWR >= 0)
-        {
-            pinMode(DS18B20_PWR, OUTPUT);  
-            digitalWrite(DS18B20_PWR, HIGH); 
-        }
-        oneWire.reset();
-        oneWire.write(SKIP_ROM);
-        oneWire.write(CONVERT_TEMPERATURE, true); 
-    }        // start conversion - all sensors    
-}
-
-
-void retrieveTemperatures(void)
-{
-    if (temperatureEnabled)
-    {
-        for (byte j=0; j < numSensors; j++)
-        {
-            byte buf[9];
-            int result;
-
-            if (!oneWire.reset())
-            {
-                result=BAD_TEMPERATURE;
-                break;
-            }
-            else
-            {
-                oneWire.write(MATCH_ROM);
-                for(int i=0; i<8; i++) 
-                    oneWire.write(temperatureSensors[j][i]);
-                oneWire.write(READ_SCRATCHPAD);
-                for(int i=0; i<9; i++) 
-                    buf[i] = oneWire.read();
-            }
-
-            if(oneWire.crc8(buf,8)==buf[8])
-            {
-                result=(buf[1]<<8)|buf[0];
-                // result is temperature x16, multiply by 6.25 to convert to temperature x100
-                result=(result*6)+(result>>2);
-            }
-            else result=BAD_TEMPERATURE;
-            if (result != BAD_TEMPERATURE && (result < -5500 || result > 12500))
-                result = OUTOFRANGE_TEMPERATURE;
-            temperatures[j] = result;
-            delay(5);
-        }
-        if (DS18B20_PWR >= 0)
-        {
-            pinMode(DS18B20_PWR, OUTPUT);  
-            digitalWrite(DS18B20_PWR, LOW); 
-        }
-        convertingTemperaturesNoAC = false;
-    }
-}
-
-
-int EmonLibCM_getTemperatureSensorCount(void)
-{
-    if (temperatureEnabled)
-        return(numSensors); 
-    else
-        return 0;
-}
-
-bool EmonLibCM_getTemperatureEnabled(void)
-{
-    return temperatureEnabled;
-}
-
-
-float EmonLibCM_getTemperature(char sensorNumber)
-{
-    int temp = temperatures[(unsigned char)sensorNumber];
-    
-    if (sensorNumber < 0 || sensorNumber >= temperatureMaxCount)
-        return UNUSED_TEMPERATURE/100.0;
-    if (temp >=30000)
-        return temp/100.0;                                      // 300 series error codes are already set
-    return (temp/100.0);
-}
-
-/**************************************************************************************************
-*
-*   PULSE INPUT ISR
-*
-*
-***************************************************************************************************/
-
 
 ISR(ADC_vect) 
 {
     EmonLibCM_interrupt();
 }
 
-// The pulse interrupt routine - runs each time a falling (leading) edge of a pulse is detected
-void onPulse()                  
-{
-    if (PulseMinPeriod)
-    {
-      if ((millis() - pulseTime) > PulseMinPeriod) {              // Check that contact bounce has finished
-        pulses++;
-      }
-      pulseTime=millis();                                         // No 'debounce' required - electronic switch presumed    
-    }
-    else
-        pulses++;                   
-}
-
- 
