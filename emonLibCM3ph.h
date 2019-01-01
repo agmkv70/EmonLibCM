@@ -13,8 +13,7 @@
 //
 // Original Author: Robin Emley (calypso_rae on Open Energy Monitor Forum)
 // Addition of Wh totals by: Trystan Lea
-// Heavily modified to improve performance and calibration; temperature measurement 
-//  and pulse counting incorporated into the library,  by Robert Wall 
+// Heavily modified to improve performance and calibration; by Robert Wall 
 //  Release for testing 4/1/2017
 //
 // Version 2.0  21/11/2018

@@ -423,11 +423,6 @@ void EmonLibCM_get_readings()
         }
     }           
 
-    if (pulses)                         // if the ISR has counted some pulses, update the total count
-    {
-        pulseCount += pulses;
-        pulses= 0;
-    }
     sei();
 
     // Calculate the final values, scaling for the number of samples and applying calibration coefficients.
@@ -476,12 +471,6 @@ void EmonLibCM_get_readings()
         wattHoursRecent = energyNow / 3600;                                                     // integer assignment to extract whole Wh
         wh_CT[i]+= wattHoursRecent;                                                             // accumulated WattHours since start-up
         residualEnergy_CT[i] = energyNow - (wattHoursRecent * 3600.0);                          // fp for accuracy
-    }
-   
-    //  Retrieve the temperatures, which should be stored inside each sensor
-    if (temperatureEnabled)
-    {
-        retrieveTemperatures();
     }
    
 }
@@ -580,13 +569,6 @@ void EmonLibCM_allGeneralProcessing_withinISR()
                 samplesDuringThisDatalogPeriod = 0;
             }
           
-          // Start temperature conversion
-            if (cycleCountForDatalogging == temperatureConversionDelayTime  && firstcycle==false)
-            {
-                // Only do it on this one cycle
-                // convertTemperatures();
-                startConvertTemperatures = true;
-            }
             if (cycleCountForDatalogging >= datalogPeriodInMainsCycles && firstcycle==false) 
             { 
               cycleCountForDatalogging = 0;    
@@ -637,14 +619,6 @@ void EmonLibCM_allGeneralProcessing_withinISR()
     // duration of the datalog period, at which point it will make the readings available.
     // The reporting interval is now dependent on the processor's internal clock
 
-    
-    // Start temperature conversion
-    if (missing_Voltage > temperatureConversionDelaySamples && convertingTemperaturesNoAC == false)
-    {
-        // Only do it once per report
-        startConvertTemperatures = true;
-        convertingTemperaturesNoAC = true;
-    }
     
     if (missing_Voltage > ADCsamples_per_datalog_period) 
     {
