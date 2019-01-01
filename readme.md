@@ -1,4 +1,5 @@
-# EmonLibCM
+# EmonLibCM + 3 phase voltage (-temperature-pulseCount)
+<b>!!! IN DEVELOPMENT</b>
 
 The EmonLibCM library is maintained by @Robert.Wall and mirrored here for users of github.
 
