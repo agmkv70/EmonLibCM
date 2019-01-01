@@ -1,6 +1,7 @@
-/*
+/* agmkv70 fork of
   emonLibCM.h - Library for openenergymonitor
   GNU GPL
+  - cleared temperature and pulse count, adding 3 phase voltage mesurement
 */
 
 // This library provides continuous single-phase monitoring of real power on up to five CT channels.
@@ -35,30 +36,6 @@
 
 #define MICROSPERSEC 1.0e6
 
-// Dallas DS18B20 commands
-#define SKIP_ROM 0xCC 
-#define MATCH_ROM 0x55
-#define CONVERT_TEMPERATURE 0x44
-#define READ_SCRATCHPAD 0xBE
-#define WRITE_SCRATCHPAD 0x4E
-#define COPY_SCRATCHPAD 0x48
-#define UNUSED_TEMPERATURE 30000     // this value (300C) is sent if no sensor has ever been detected
-#define OUTOFRANGE_TEMPERATURE 30200 // this value (302C) is sent if the sensor reports < -55C or > +125C
-#define BAD_TEMPERATURE 30400        // this value (304C) is sent if no sensor is present or the checksum is bad (corrupted data)
-// NOTE: The sensor might report 85C if the temperature is retrieved but the sensor has not been commanded
-
-
-                                     // NOTE: The sensor might report 85C if the temperature is retrieved but the sensor has not been commanded
-                                     //  to measure the temperature.
-
-#define TEMPRES_9 0x1F
-#define TEMPRES_10 0x3F
-#define TEMPRES_11 0x5F
-#define TEMPRES_12 0x7F
-#define CONVERSION_LEAD_TIME 752     // this is the conversion time of the DS18B20 in ms at 12-bits (rounded up to multiple of 8).
-
-typedef uint8_t DeviceAddress[8];
-
 void EmonLibCM_cycles_per_second(int _cycles_per_second);
 void EmonLibCM_min_startup_cycles(int _min_startup_cycles);
 void EmonLibCM_datalog_period(float _datalog_period_in_seconds);
@@ -67,10 +44,6 @@ void EmonLibCM_ADCCal(double _RefVoltage);
 void EmonLibCM_SetADC_VChannel(byte ADC_Input, double _amplitudeCal);
 void EmonLibCM_SetADC_IChannel(byte ADC_Input, double _amplitudeCal, double _phaseCal);
 
-void EmonLibCM_setPulseEnable(bool _enable);
-void EmonLibCM_setPulsePin(int _pin, int _interrupt);
-void EmonLibCM_setPulseMinPeriod(int _periodwidth);
-
 bool EmonLibCM_acPresent(void);
 int EmonLibCM_getRealPower(int channel);
 int EmonLibCM_getApparentPower(int channel);
@@ -78,23 +51,6 @@ double EmonLibCM_getPF(int channel);
 double EmonLibCM_getIrms(int channel);
 double EmonLibCM_getVrms(void);
 long EmonLibCM_getWattHour(int channel);
-unsigned long EmonLibCM_getPulseCount(void);
-
-
-void EmonLibCM_setTemperatureDataPin(byte _dataPin);
-void EmonLibCM_setTemperaturePowerPin(char _powerPin);
-void EmonLibCM_setTemperatureResolution(byte _resolution);
-void EmonLibCM_setTemperatureAddresses(DeviceAddress *addressArray);
-void EmonLibCM_setTemperatureAddresses(DeviceAddress *addressArray, bool keep);
-void EmonLibCM_setTemperatureArray(int *temperatureArray);
-void EmonLibCM_setTemperatureMaxCount(int _maxCount);
-void EmonLibCM_TemperatureEnable(bool _enable);
-bool EmonLibCM_getTemperatureEnabled(void);
-void printTemperatureSensorAddresses(void);
-void convertTemperatures(void);
-void retrieveTemperatures(void);
-int EmonLibCM_getTemperatureSensorCount(void);
-float EmonLibCM_getTemperature(char sensorNumber);
 
 #ifdef INTEGRITY
 int EmonLibCM_minSampleSetsDuringThisMainsCycle(void);
